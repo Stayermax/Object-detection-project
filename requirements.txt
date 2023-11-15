@@ -1,0 +1,5 @@
+click==8.1.6
+dlib==19.24.2
+numpy==1.25.1
+opencv-python==4.8.0.74
+Pillow==10.0.0
