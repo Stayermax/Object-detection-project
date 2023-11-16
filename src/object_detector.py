@@ -1,17 +1,22 @@
+from typing import Union
 import cv2
 import numpy as np
+from colorir import sRGB
 
-class VideoObjectDetector:
+
+class ObjectDetector:
     font = cv2.FONT_HERSHEY_DUPLEX
     colors = {
         # BGR colors
-        "red": (0,0,255),
-        "green": (0, 255, 0),
         "blue": (255, 0, 0),
-        "white": (255, 255, 255)
+        "green": (0, 255, 0),
+        "red": (0, 0, 255),
+        "yellow": (0, 0, 255),
+        "white": (255, 255, 255),
+        "black": (0, 0, 0)
     }
 
-    def __init__(self, input_=0, image_compression=4):
+    def __init__(self, input_: Union[int, str], image_compression=4):
         """
         Input source can be port of camera or path to video or image
         :param input_:
@@ -25,50 +30,33 @@ class VideoObjectDetector:
         self.width = image.shape[1]
         self.image_compression = image_compression
 
-    def stream(self, image_edit_function = lambda x: x):
+    def stream(self, image_edit_function = lambda x, *args, **kwargs: x, *args, **kwargs):
         while True:
             ret, image = self.cap.read()
-            cv2.imshow("Test", image_edit_function(image))
+            cv2.imshow("Test", image_edit_function(image, *args, **kwargs))
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
         self.cap.release()
         cv2.destroyAllWindows()
 
-    def show_image(self, image_edit_function = lambda x: x):
+    def show_image(self, image_edit_function = lambda x, *args, **kwargs: x, *args, **kwargs):
         while True:
             image = cv2.imread(self.input_source)
-            cv2.imshow("Test", image_edit_function(image))
+            cv2.imshow("Test", image_edit_function(image, *args, **kwargs))
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
     @staticmethod
     def color_by_name(color: str) -> tuple:
-        return VideoObjectDetector.colors.get(color, (255, 255, 255))
+        return ObjectDetector.colors.get(color, (255, 255, 255))
 
 
     @staticmethod
     def draw_rectangle(image: np.ndarray, object_cords: list, bgr_color: tuple):
         (top, right, bottom, left) = object_cords
         image = cv2.rectangle(image, (left, top), (right, bottom), bgr_color, 5)
-        return cv2.putText(image, "Object", (left + 6, bottom - 6), VideoObjectDetector.font, 1.0, bgr_color, 2)
-    #
-    # @staticmethod
-    # def find_object_cords_from_contour(contour: list) -> list:
-    #     x, y, w, h = cv2.boundingRect(contour)
-    #     return [x, y, x+h, y+w]
-    #     # top, right, bottom, left = -1, 10**8, 10**8, -1
-    #     # for point in contour:
-    #     #     x = point[0][0]
-    #     #     y = point[0][1]
-    #     #     if top < x:
-    #     #         top = x
-    #     #     if right > x:
-    #     #         right = x
-    #     #     if bottom > x:
-    #     #         bottom = x
-    #     #     if left < x:
-    #     #         left = x
-    #     # return [top, right, bottom, left]
+        return cv2.putText(image, "Object", (left + 6, bottom - 6), ObjectDetector.font, 1.0, bgr_color, 2)
+
 
     @staticmethod
     # calculate distance between two contours
@@ -98,7 +86,7 @@ class VideoObjectDetector:
 
             for x in range(len(current_contours) - 1):
                 for y in range(x + 1, len(current_contours)):
-                    distance = VideoObjectDetector.calculate_contour_distance(current_contours[x], current_contours[y])
+                    distance = ObjectDetector.calculate_contour_distance(current_contours[x], current_contours[y])
                     if min_distance is None:
                         min_distance = distance
                         min_coordinate = (x, y)
@@ -152,12 +140,6 @@ class VideoObjectDetector:
         objects_crds = self.get_contours_from_updated_frame(updated_image)
         for x, y, w, h in objects_crds:
             frame = cv2.rectangle(frame, (x, y), (x+w, y+h), self.colors['red'], 5)
-
-        # for object_crds in objects_crds:
-        #     frame = self.draw_rectangle(frame, object_crds, self.colors['red'])
-
-        # for face_cords in cords_list:
-        #     image = self.draw_rectangle(image, face_cords, self.colors['red'])
         return frame
 
     def highlight_contours(self, frame):
@@ -165,4 +147,29 @@ class VideoObjectDetector:
         ret, search_frame = cv2.threshold(search_frame, 127, 255, 0)
         contours, hierarchy = cv2.findContours(search_frame, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(frame, contours, -1, (0, 255, 0), 3)
+        return frame
+
+    def highlight_colored_objects(self, frame, color_to_detect: list, hue_koef: float = 1):
+        hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        b_, g_, r_ = color_to_detect
+        rgb = sRGB(r_, g_, b_, max_rgb=255)
+        h_, s_, v_ = rgb.hsv(max_h=179, max_sva=255)
+        # print(f"HSV: {[h_, s_, v_]}")
+
+        lower_limit = np.array([max(0, int(h_ - hue_koef * 10)), 100, 100])
+        upper_limit = np.array([min(179, int(h_ + hue_koef * 10)),255, 255])
+
+        mask = cv2.inRange(hsv_frame, lower_limit, upper_limit)
+        bbox = cv2.boundingRect(mask)
+
+        # if we get a bounding box, use it to draw a rectangle on the image
+        if bbox is not None:
+            x, y, w, h = bbox
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color_to_detect, 2)
+            center = (int((2*x+w)/2), int((2*y+h)/2))
+            # print(f"Object center is on cords: {center}")
+            frame = cv2.circle(frame, center, radius=4, color=(255-b_, 255-g_, 255-r_), thickness=-1)
+        else:
+            print("Object not detected")
+
         return frame
